@@ -29,17 +29,18 @@
   background: var(--code-background);
 }
 
-.obsidian-python-output {
+.obsidian-python-run > pre.obsidian-python-output {
   padding: 0.45em 0.65em;
-  border-left: 3px solid var(--interactive-accent);
+  border-left: 3px solid var(--interactive-accent) !important;
+  border-radius: var(--radius-s);
   background: var(--background-primary-alt);
   color: var(--text-normal);
   font-family: var(--font-monospace);
   font-size: var(--code-size);
 }
 
-.obsidian-python-error {
-  border-left-color: var(--text-error);
+.obsidian-python-run > pre.obsidian-python-output.obsidian-python-error {
+  border-left-color: var(--text-error) !important;
   color: var(--text-error);
 }
 

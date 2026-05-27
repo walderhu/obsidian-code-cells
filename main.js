@@ -8,8 +8,6 @@ const {
   PluginSettingTab,
   Setting,
 } = require("obsidian");
-const { Prec } = require("@codemirror/state");
-const { keymap } = require("@codemirror/view");
 
 const DEGREE = Math.PI / 180;
 
@@ -500,12 +498,6 @@ class CalcPlugin extends Plugin {
     await this.loadSettings();
     this.pythonResults = new Map();
     this.registerEditorSuggest(new PythonSuggest(this));
-    this.registerEditorExtension(
-      Prec.highest(keymap.of([{
-        key: "Mod-Enter",
-        run: () => this.leaveActiveCodeCell(),
-      }]))
-    );
 
     this.registerMarkdownCodeBlockProcessor("calc", (source, element, context) => {
       this.renderCalculation(source, element, context);
@@ -531,7 +523,6 @@ class CalcPlugin extends Plugin {
     this.addCommand({
       id: "run-current-code-cell",
       name: "Leave current code cell",
-      hotkeys: [{ modifiers: ["Mod"], key: "Enter" }],
       editorCheckCallback: (checking, editor) => {
         const block = findFencedCodeBlock(editor, editor.getCursor().line);
         if (!block) {
@@ -548,8 +539,11 @@ class CalcPlugin extends Plugin {
 
     this.registerDomEvent(document, "keydown", (event) => {
       this.openLanguagePickerOnHotkey(event);
-      this.executeBlockOnHotkey(event);
       this.commitCalculationOnEnter(event);
+    }, true);
+    // Capture before Obsidian's command hotkeys; let unrelated editors continue normally.
+    this.registerDomEvent(window, "keydown", (event) => {
+      this.captureCodeCellExecutionOnHotkey(event);
     }, true);
   }
 
@@ -695,7 +689,7 @@ class CalcPlugin extends Plugin {
     );
   }
 
-  executeBlockOnHotkey(event) {
+  captureCodeCellExecutionOnHotkey(event) {
     const pressedModEnter =
       event.key === "Enter" &&
       (event.ctrlKey || event.metaKey) &&
@@ -705,7 +699,8 @@ class CalcPlugin extends Plugin {
       return;
     }
 
-    if (!this.leaveActiveCodeCell()) {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view || !view.containerEl.contains(event.target) || !this.leaveActiveCodeCell(view.editor)) {
       return;
     }
 

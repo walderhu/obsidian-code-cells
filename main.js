@@ -51,24 +51,24 @@ const FUNCTIONS = {
 };
 
 const CODE_LANGUAGES = [
-  { id: "calc", name: "Calc", description: "Калькулятор: = и Enter сохраняют ответ" },
-  { id: "python", name: "Python", description: "Скрипт Python" },
-  { id: "bash", name: "Bash", description: "Команды терминала" },
-  { id: "sql", name: "SQL", description: "SQL-запрос" },
-  { id: "javascript", name: "JavaScript", description: "JavaScript-код" },
-  { id: "typescript", name: "TypeScript", description: "TypeScript-код" },
-  { id: "json", name: "JSON", description: "Структурированные данные" },
-  { id: "html", name: "HTML", description: "HTML-разметка" },
-  { id: "css", name: "CSS", description: "Стили CSS" },
-  { id: "markdown", name: "Markdown", description: "Markdown-текст" },
-  { id: "yaml", name: "YAML", description: "YAML-конфигурация" },
-  { id: "powershell", name: "PowerShell", description: "Команды PowerShell" },
-  { id: "c", name: "C", description: "Код C" },
-  { id: "cpp", name: "C++", description: "Код C++" },
-  { id: "java", name: "Java", description: "Код Java" },
-  { id: "rust", name: "Rust", description: "Код Rust" },
-  { id: "go", name: "Go", description: "Код Go" },
-  { id: "latex", name: "LaTeX", description: "Формулы и документ LaTeX" },
+  { id: "calc" },
+  { id: "python" },
+  { id: "bash" },
+  { id: "sql" },
+  { id: "javascript" },
+  { id: "typescript" },
+  { id: "json" },
+  { id: "html" },
+  { id: "css" },
+  { id: "markdown" },
+  { id: "yaml" },
+  { id: "powershell" },
+  { id: "c" },
+  { id: "cpp" },
+  { id: "java" },
+  { id: "rust" },
+  { id: "go" },
+  { id: "latex" },
 ];
 
 const DEFAULT_SETTINGS = {
@@ -271,7 +271,7 @@ class CodeLanguageModal extends FuzzySuggestModal {
   }
 
   getItemText(item) {
-    return `${item.name} (${item.id}) - ${item.description}`;
+    return item.id;
   }
 
   onChooseItem(item) {
@@ -321,8 +321,8 @@ class CalcPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.registerMarkdownCodeBlockProcessor("calc", (source, element) => {
-      this.renderCalculation(source, element);
+    this.registerMarkdownCodeBlockProcessor("calc", (source, element, context) => {
+      this.renderCalculation(source, element, context);
     });
 
     this.addCommand({
@@ -416,23 +416,42 @@ class CalcPlugin extends Plugin {
     this.recordLanguage(language);
   }
 
-  renderCalculation(source, element) {
+  renderCalculation(source, element, context) {
     const expression = source.replace(/=\s*$/, "").trim();
-    const blockElement = element.createEl("pre", { cls: "obsidian-calc-block" });
-    const languageElement = blockElement.createSpan({
-      cls: "obsidian-calc-language",
-      text: "calc",
-    });
-    languageElement.setAttr("aria-hidden", "true");
-    const codeElement = blockElement.createEl("code", { cls: "language-calc" });
+    const resultElement = element.createDiv({ cls: "obsidian-calc-result" });
+    resultElement.setAttr("title", "Click to edit calc expression");
+    resultElement.setAttr("tabindex", "0");
 
     try {
-      const result = formatResult(evaluateExpression(expression));
-      codeElement.setText(`${expression}\n= ${result}`);
+      resultElement.setText(formatResult(evaluateExpression(expression)));
     } catch (error) {
-      blockElement.addClass("obsidian-calc-error");
-      codeElement.setText(`${expression}\n! ${error.message}`);
+      resultElement.addClass("obsidian-calc-error");
+      resultElement.setText(error.message);
     }
+
+    const editExpression = (event) => {
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const section = context?.getSectionInfo?.(element);
+      if (!view || !section || view.file?.path !== context.sourcePath || view.getMode?.() !== "source") {
+        return;
+      }
+
+      event?.preventDefault();
+      event?.stopPropagation();
+      window.requestAnimationFrame(() => {
+        view.editor.focus();
+        const editLine = section.lineStart + 1;
+        const cursor = { line: editLine, ch: view.editor.getLine(editLine).length };
+        view.editor.setCursor(cursor);
+        view.editor.scrollIntoView?.({ from: cursor, to: cursor }, true);
+      });
+    };
+    resultElement.addEventListener("click", editExpression);
+    resultElement.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        editExpression(event);
+      }
+    });
   }
 
   commitCalculationOnEnter(event) {

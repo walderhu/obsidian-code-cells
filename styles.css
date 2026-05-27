@@ -1,23 +1,15 @@
-.obsidian-calc-block {
-  position: relative;
-  margin: 0;
-  padding-top: 1.7em;
-}
-
-.obsidian-calc-block code {
-  display: block;
+.obsidian-calc-result {
+  padding: 0.35em 0.65em;
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: text;
   font-family: var(--font-monospace);
-}
-
-.obsidian-calc-language {
-  position: absolute;
-  top: 0.35em;
-  right: 0.65em;
-  color: var(--text-muted);
-  font-family: var(--font-monospace);
-  font-size: var(--font-ui-smaller);
+  font-size: var(--code-size);
 }
 
 .obsidian-calc-error {
+  border-left-color: var(--text-error);
   color: var(--text-error);
 }

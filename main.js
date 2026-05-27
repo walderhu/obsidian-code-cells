@@ -8,6 +8,7 @@ const {
   PluginSettingTab,
   Setting,
 } = require("obsidian");
+const { Transaction } = require("@codemirror/state");
 
 const DEGREE = Math.PI / 180;
 
@@ -671,22 +672,30 @@ class CalcPlugin extends Plugin {
       return;
     }
 
+    const position = { line, ch: lineText.length };
     const cm = editor.cm;
-    if (cm?.dispatch && editor.posToOffset) {
-      const from = editor.posToOffset({ line, ch: lineText.length - 1 });
+    if (cm?.dispatch && editor.posToOffset && Transaction?.addToHistory) {
+      const offset = editor.posToOffset(position);
+      const withoutUndo = Transaction.addToHistory.of(false);
       cm.dispatch({
-        changes: { from, to: from + 1, insert: lineText.slice(-1) },
+        changes: { from: offset, insert: "\n" },
+        annotations: withoutUndo,
+      });
+      window.requestAnimationFrame(() => {
+        cm.dispatch({
+          changes: { from: offset, to: offset + 1, insert: "" },
+          annotations: withoutUndo,
+        });
+        editor.setCursor(position);
       });
       return;
     }
 
-    // Replacing a character with itself triggers Live Preview decorators
-    // without changing the note contents.
-    editor.replaceRange(
-      lineText.slice(-1),
-      { line, ch: lineText.length - 1 },
-      { line, ch: lineText.length }
-    );
+    editor.replaceRange("\n", position);
+    window.requestAnimationFrame(() => {
+      editor.replaceRange("", position, { line: line + 1, ch: 0 });
+      editor.setCursor(position);
+    });
   }
 
   captureCodeCellExecutionOnHotkey(event) {

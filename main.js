@@ -1,4 +1,5 @@
 const {
+  EditorSuggest,
   FuzzySuggestModal,
   MarkdownView,
   Notice,
@@ -7,6 +8,8 @@ const {
   PluginSettingTab,
   Setting,
 } = require("obsidian");
+const { Prec } = require("@codemirror/state");
+const { keymap } = require("@codemirror/view");
 
 const DEGREE = Math.PI / 180;
 
@@ -76,10 +79,19 @@ const CODE_LANGUAGES = [
 
 const DEFAULT_SETTINGS = {
   captureCtrlK: true,
-  pythonCommand: "auto",
+  pythonCommand: "local",
   pythonTimeoutSeconds: 5,
   recentLanguages: [],
 };
+
+const PYTHON_SUGGESTIONS = [
+  "print", "len", "range", "enumerate", "zip", "list", "dict", "set", "tuple",
+  "str", "int", "float", "bool", "sum", "min", "max", "sorted", "open", "input",
+  "abs", "round", "type", "isinstance", "Exception", "ValueError", "True", "False",
+  "None", "def", "class", "return", "import", "from", "as", "for", "while", "if",
+  "elif", "else", "try", "except", "finally", "with", "lambda", "yield", "async",
+  "await", "break", "continue", "pass", "and", "or", "not", "in", "is",
+];
 
 class ExpressionParser {
   constructor(source) {
@@ -279,6 +291,122 @@ function findCalcBlock(editor, line) {
   return null;
 }
 
+function findPythonRunBlock(editor, line) {
+  let openingLine = -1;
+
+  for (let current = line; current >= 0; current -= 1) {
+    const text = editor.getLine(current);
+    if (/^\s*```(?:python\s+run|python-run)\s*$/i.test(text)) {
+      openingLine = current;
+      break;
+    }
+    if (/^\s*```/.test(text)) {
+      return null;
+    }
+  }
+
+  if (openingLine < 0) {
+    return null;
+  }
+
+  for (let current = openingLine + 1; current < editor.lineCount(); current += 1) {
+    if (/^\s*```\s*$/.test(editor.getLine(current))) {
+      return line < current ? { openingLine, closingLine: current } : null;
+    }
+  }
+
+  return null;
+}
+
+function findFencedCodeBlock(editor, line) {
+  let openingLine = -1;
+
+  for (let current = line; current >= 0; current -= 1) {
+    if (/^\s*(?:```|~~~)/.test(editor.getLine(current))) {
+      openingLine = current;
+      break;
+    }
+  }
+
+  if (openingLine < 0) {
+    return null;
+  }
+
+  const marker = editor.getLine(openingLine).match(/^\s*(```|~~~)/)?.[1];
+  if (!marker) {
+    return null;
+  }
+
+  for (let current = openingLine + 1; current < editor.lineCount(); current += 1) {
+    if (new RegExp(`^\\s*${marker}\\s*$`).test(editor.getLine(current))) {
+      return line < current ? { openingLine, closingLine: current } : null;
+    }
+  }
+
+  return null;
+}
+
+class PythonSuggest extends EditorSuggest {
+  constructor(plugin) {
+    super(plugin.app);
+    this.plugin = plugin;
+    this.scope.register([], "Tab", (event) => {
+      this.suggestions.useSelectedItem(event);
+      return false;
+    });
+  }
+
+  onTrigger(cursor, editor) {
+    if (!findPythonRunBlock(editor, cursor.line)) {
+      return null;
+    }
+    const beforeCursor = editor.getLine(cursor.line).slice(0, cursor.ch);
+    const match = beforeCursor.match(/[A-Za-z_][A-Za-z0-9_]*$/);
+    if (!match) {
+      return null;
+    }
+    this.latestContext = {
+      start: { line: cursor.line, ch: cursor.ch - match[0].length },
+      end: cursor,
+      query: match[0],
+    };
+    return this.latestContext;
+  }
+
+  getSuggestions(context) {
+    const editor = this.app.workspace.activeEditor?.editor;
+    const block = editor && findPythonRunBlock(editor, context.start.line);
+    const names = new Set(PYTHON_SUGGESTIONS);
+    if (block) {
+      for (let line = block.openingLine + 1; line < block.closingLine; line += 1) {
+        const text = editor.getLine(line);
+        for (const match of text.matchAll(/\b(?:def|class|import|as)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)\s*=/g)) {
+          names.add(match[1] || match[2]);
+        }
+      }
+    }
+    const query = context.query.toLowerCase();
+    return [...names]
+      .filter((name) => name.toLowerCase().startsWith(query) && name !== context.query)
+      .sort()
+      .slice(0, 30);
+  }
+
+  renderSuggestion(suggestion, element) {
+    element.addClass("obsidian-python-suggestion-item");
+    element.createSpan({ cls: "obsidian-python-suggestion-icon", text: "py" });
+    element.createSpan({ cls: "obsidian-python-suggestion-label", text: suggestion });
+    element.createSpan({ cls: "obsidian-python-suggestion-kind", text: "Python" });
+  }
+
+  selectSuggestion(suggestion) {
+    const editor = this.app.workspace.activeEditor?.editor;
+    if (editor && this.latestContext) {
+      editor.replaceRange(suggestion, this.latestContext.start, this.latestContext.end);
+    }
+  }
+}
+
 class CodeLanguageModal extends FuzzySuggestModal {
   constructor(app, plugin, editor) {
     super(app);
@@ -338,10 +466,10 @@ class CalcSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Python command")
-      .setDesc("Executable used by python run blocks. Use auto, python3, python, py, or a full path.")
+      .setDesc("Executable used by python run blocks. Use local, auto, python3, python, py, or a full path.")
       .addText((text) => {
         text
-          .setPlaceholder("auto")
+          .setPlaceholder("local")
           .setValue(this.plugin.settings.pythonCommand)
           .onChange(async (value) => {
             this.plugin.settings.pythonCommand = value.trim() || DEFAULT_SETTINGS.pythonCommand;
@@ -371,6 +499,13 @@ class CalcPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
     this.pythonResults = new Map();
+    this.registerEditorSuggest(new PythonSuggest(this));
+    this.registerEditorExtension(
+      Prec.highest(keymap.of([{
+        key: "Mod-Enter",
+        run: () => this.leaveActiveCodeCell(),
+      }]))
+    );
 
     this.registerMarkdownCodeBlockProcessor("calc", (source, element, context) => {
       this.renderCalculation(source, element, context);
@@ -393,11 +528,27 @@ class CalcPlugin extends Plugin {
         this.openLanguagePicker(editor);
       },
     });
+    this.addCommand({
+      id: "run-current-code-cell",
+      name: "Leave current code cell",
+      hotkeys: [{ modifiers: ["Mod"], key: "Enter" }],
+      editorCheckCallback: (checking, editor) => {
+        const block = findFencedCodeBlock(editor, editor.getCursor().line);
+        if (!block) {
+          return false;
+        }
+        if (!checking) {
+          this.leaveActiveCodeCell(editor);
+        }
+        return true;
+      },
+    });
 
     this.addSettingTab(new CalcSettingTab(this.app, this));
 
     this.registerDomEvent(document, "keydown", (event) => {
       this.openLanguagePickerOnHotkey(event);
+      this.executeBlockOnHotkey(event);
       this.commitCalculationOnEnter(event);
     }, true);
   }
@@ -515,7 +666,9 @@ class CalcPlugin extends Plugin {
       const cursor = { line: editLine, ch: lineText.length };
       view.editor.setCursor(cursor);
       view.editor.scrollIntoView?.({ from: cursor, to: cursor }, true);
-      this.refreshLivePreviewDecorations(view.editor, editLine, lineText);
+      window.requestAnimationFrame(() => {
+        this.refreshLivePreviewDecorations(view.editor, editLine, lineText);
+      });
     });
   }
 
@@ -542,6 +695,56 @@ class CalcPlugin extends Plugin {
     );
   }
 
+  executeBlockOnHotkey(event) {
+    const pressedModEnter =
+      event.key === "Enter" &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!pressedModEnter) {
+      return;
+    }
+
+    if (!this.leaveActiveCodeCell()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  leaveActiveCodeCell(editor = null) {
+    const activeEditor = editor || this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+    if (!activeEditor) {
+      return false;
+    }
+
+    const line = activeEditor.getCursor().line;
+    const block = findFencedCodeBlock(activeEditor, line);
+    if (!block) {
+      return false;
+    }
+
+    if (findPythonRunBlock(activeEditor, line)) {
+      this.pythonResults.clear();
+    }
+    this.leaveExecutableBlock(activeEditor, block);
+    return true;
+  }
+
+  leaveExecutableBlock(editor, block) {
+    if (block.closingLine + 1 >= editor.lineCount()) {
+      editor.replaceRange(
+        "\n",
+        { line: block.closingLine, ch: editor.getLine(block.closingLine).length }
+      );
+    }
+    const destination = { line: block.closingLine + 1, ch: 0 };
+    editor.focus?.();
+    editor.setCursor(destination);
+    editor.scrollIntoView?.({ from: destination, to: destination }, true);
+  }
+
   async renderPythonRun(source, element, context) {
     const code = dedentCode(source);
     const container = element.createDiv({ cls: "obsidian-python-run" });
@@ -552,6 +755,7 @@ class CalcPlugin extends Plugin {
       this.editRenderedBlock(element, context, event);
     });
     const outputElement = container.createEl("pre", { cls: "obsidian-python-output" });
+    const diagnosticsElement = container.createDiv({ cls: "obsidian-python-diagnostics" });
     const section = context?.getSectionInfo?.(element);
     const key = `${context?.sourcePath || ""}:${section?.lineStart ?? ""}:${code}`;
 
@@ -561,7 +765,7 @@ class CalcPlugin extends Plugin {
     }
 
     if (this.pythonResults.has(key)) {
-      this.showPythonResult(outputElement, this.pythonResults.get(key));
+      this.showPythonResult(outputElement, diagnosticsElement, this.pythonResults.get(key));
       return;
     }
 
@@ -576,10 +780,12 @@ class CalcPlugin extends Plugin {
     }
 
     outputElement.setText("Running...");
-    const result = await this.runPython(code);
+    diagnosticsElement.setText("Linting...");
+    const [execution, diagnostics] = await Promise.all([this.runPython(code), this.lintPython(code)]);
+    const result = { ...execution, diagnostics };
     this.pythonResults.set(key, result);
     if (outputElement.isConnected) {
-      this.showPythonResult(outputElement, result);
+      this.showPythonResult(outputElement, diagnosticsElement, result);
     }
   }
 
@@ -598,9 +804,21 @@ class CalcPlugin extends Plugin {
     block.createEl("code", { cls: "language-python", text: source });
   }
 
-  showPythonResult(element, result) {
+  showPythonResult(element, diagnosticsElement, result) {
     element.toggleClass("obsidian-python-error", !result.ok);
     element.setText(result.output || (result.ok ? "(no output)" : "Python failed."));
+    diagnosticsElement.empty();
+    if (!result.diagnostics?.length) {
+      diagnosticsElement.setText("No lint problems.");
+      diagnosticsElement.removeClass("obsidian-python-lint-error");
+      return;
+    }
+    diagnosticsElement.addClass("obsidian-python-lint-error");
+    for (const diagnostic of result.diagnostics) {
+      diagnosticsElement.createDiv({
+        text: `Line ${diagnostic.line}: ${diagnostic.code} ${diagnostic.message}`,
+      });
+    }
   }
 
   async runPython(source) {
@@ -609,12 +827,7 @@ class CalcPlugin extends Plugin {
     }
 
     const timeout = (this.settings.pythonTimeoutSeconds || DEFAULT_SETTINGS.pythonTimeoutSeconds) * 1000;
-    const configuredCommand = this.settings.pythonCommand || DEFAULT_SETTINGS.pythonCommand;
-    const candidates = configuredCommand === "auto"
-      ? Platform.isWin
-        ? [{ command: "py", args: ["-3"] }, { command: "python", args: [] }]
-        : [{ command: "python3", args: [] }, { command: "python", args: [] }]
-      : [{ command: configuredCommand, args: [] }];
+    const candidates = this.getPythonCandidates();
 
     for (const [index, candidate] of candidates.entries()) {
       const result = await this.executePython(candidate.command, [...candidate.args, "-c", source], timeout);
@@ -622,6 +835,61 @@ class CalcPlugin extends Plugin {
         return result;
       }
     }
+  }
+
+  getPythonCandidates() {
+    const configuredCommand = this.settings.pythonCommand || DEFAULT_SETTINGS.pythonCommand;
+    const autoCandidates = Platform.isWin
+      ? [{ command: "py", args: ["-3"] }, { command: "python", args: [] }]
+      : [{ command: "python3", args: [] }, { command: "python", args: [] }];
+    if (configuredCommand === "local") {
+      return [{ command: this.getLocalEnvironmentExecutable("python"), args: [] }, ...autoCandidates];
+    }
+    return configuredCommand === "auto"
+      ? Platform.isWin
+        ? [{ command: "py", args: ["-3"] }, { command: "python", args: [] }]
+        : [{ command: "python3", args: [] }, { command: "python", args: [] }]
+      : [{ command: configuredCommand, args: [] }];
+  }
+
+  getLocalEnvironmentExecutable(name) {
+    const path = require("path");
+    const basePath = this.app.vault.adapter.getBasePath();
+    const pluginDirectory = this.manifest.dir || `.obsidian/plugins/${this.manifest.id}`;
+    const directory = Platform.isWin ? "Scripts" : "bin";
+    const suffix = Platform.isWin ? ".exe" : "";
+    return path.join(basePath, pluginDirectory, ".venv", directory, `${name}${suffix}`);
+  }
+
+  async lintPython(source) {
+    if (Platform.isMobile) {
+      return [];
+    }
+    const candidates = [
+      this.getLocalEnvironmentExecutable("ruff"),
+      "ruff",
+    ];
+    for (const [index, command] of candidates.entries()) {
+      const result = await this.executeWithInput(
+        command,
+        ["check", "--output-format=json", "--stdin-filename", "cell.py", "-"],
+        source,
+        5000
+      );
+      if (result.errorCode === "ENOENT" && index < candidates.length - 1) {
+        continue;
+      }
+      try {
+        return JSON.parse(result.stdout || "[]").map((problem) => ({
+          line: problem.location.row,
+          code: problem.code,
+          message: problem.message,
+        }));
+      } catch (_error) {
+        return result.ok ? [] : [{ line: 1, code: "ruff", message: result.stderr || result.output }];
+      }
+    }
+    return [];
   }
 
   async executePython(command, args, timeout) {
@@ -649,6 +917,27 @@ class CalcPlugin extends Plugin {
         : failure.error?.message || "Python failed.";
       return { ok: false, output: details || message, errorCode: failure.error?.code };
     }
+  }
+
+  async executeWithInput(command, args, input, timeout) {
+    const { spawn } = require("child_process");
+    return new Promise((resolve) => {
+      const process = spawn(command, args, { windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      const timer = setTimeout(() => process.kill(), timeout);
+      process.stdout.on("data", (chunk) => { stdout += chunk; });
+      process.stderr.on("data", (chunk) => { stderr += chunk; });
+      process.on("error", (error) => {
+        clearTimeout(timer);
+        resolve({ ok: false, stdout, stderr, output: error.message, errorCode: error.code });
+      });
+      process.on("close", (code) => {
+        clearTimeout(timer);
+        resolve({ ok: code === 0, stdout, stderr, output: stderr, errorCode: null });
+      });
+      process.stdin.end(input);
+    });
   }
 
   commitCalculationOnEnter(event) {
@@ -703,3 +992,6 @@ module.exports = CalcPlugin;
 module.exports.evaluateExpression = evaluateExpression;
 module.exports.formatResult = formatResult;
 module.exports.dedentCode = dedentCode;
+module.exports.PythonSuggest = PythonSuggest;
+module.exports.findPythonRunBlock = findPythonRunBlock;
+module.exports.findFencedCodeBlock = findFencedCodeBlock;

@@ -25,10 +25,14 @@
   margin: 0;
 }
 
+.obsidian-python-code {
+  background: var(--code-background);
+}
+
 .obsidian-python-output {
   padding: 0.45em 0.65em;
   border-left: 3px solid var(--interactive-accent);
-  background: var(--background-secondary);
+  background: var(--background-primary-alt);
   color: var(--text-normal);
   font-family: var(--font-monospace);
   font-size: var(--code-size);
@@ -37,4 +41,43 @@
 .obsidian-python-error {
   border-left-color: var(--text-error);
   color: var(--text-error);
+}
+
+.obsidian-python-diagnostics {
+  padding: 0.35em 0.65em;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
+.obsidian-python-lint-error {
+  border-left-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.obsidian-python-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  font-family: var(--font-monospace);
+}
+
+.obsidian-python-suggestion-icon {
+  padding: 0.05em 0.3em;
+  border-radius: var(--radius-s);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 0.75em;
+  font-weight: 600;
+}
+
+.obsidian-python-suggestion-label {
+  flex: 1;
+}
+
+.obsidian-python-suggestion-kind {
+  color: var(--text-muted);
+  font-size: 0.8em;
 }

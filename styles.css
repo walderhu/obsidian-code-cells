@@ -13,3 +13,28 @@
   border-left-color: var(--text-error);
   color: var(--text-error);
 }
+
+.obsidian-python-run {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+}
+
+.obsidian-python-code,
+.obsidian-python-output {
+  margin: 0;
+}
+
+.obsidian-python-output {
+  padding: 0.45em 0.65em;
+  border-left: 3px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--code-size);
+}
+
+.obsidian-python-error {
+  border-left-color: var(--text-error);
+  color: var(--text-error);
+}

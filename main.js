@@ -2,6 +2,7 @@ const {
   FuzzySuggestModal,
   MarkdownView,
   Notice,
+  Platform,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -54,6 +55,7 @@ const CODE_LANGUAGES = [
   { id: "calc" },
   { id: "text" },
   { id: "python" },
+  { id: "python run" },
   { id: "bash" },
   { id: "sql" },
   { id: "javascript" },
@@ -74,6 +76,8 @@ const CODE_LANGUAGES = [
 
 const DEFAULT_SETTINGS = {
   captureCtrlK: true,
+  pythonCommand: "auto",
+  pythonTimeoutSeconds: 5,
   recentLanguages: [],
 };
 
@@ -232,6 +236,22 @@ function formatResult(value) {
   return Number(value.toPrecision(14)).toString();
 }
 
+function dedentCode(source) {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  while (lines.length && !lines[0].trim()) {
+    lines.shift();
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) {
+    lines.pop();
+  }
+
+  const indents = lines
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^[ \t]*/)[0].length);
+  const indentation = indents.length ? Math.min(...indents) : 0;
+  return lines.map((line) => line.slice(indentation)).join("\n");
+}
+
 function findCalcBlock(editor, line) {
   let openingLine = -1;
 
@@ -315,15 +335,55 @@ class CalcSettingTab extends PluginSettingTab {
           new Notice("Calc: language history cleared");
         });
       });
+
+    new Setting(containerEl)
+      .setName("Python command")
+      .setDesc("Executable used by python run blocks. Use auto, python3, python, py, or a full path.")
+      .addText((text) => {
+        text
+          .setPlaceholder("auto")
+          .setValue(this.plugin.settings.pythonCommand)
+          .onChange(async (value) => {
+            this.plugin.settings.pythonCommand = value.trim() || DEFAULT_SETTINGS.pythonCommand;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Python timeout")
+      .setDesc("Maximum running time for a python run block, in seconds.")
+      .addText((text) => {
+        text
+          .setPlaceholder(String(DEFAULT_SETTINGS.pythonTimeoutSeconds))
+          .setValue(String(this.plugin.settings.pythonTimeoutSeconds))
+          .onChange(async (value) => {
+            const seconds = Number(value);
+            if (Number.isFinite(seconds) && seconds >= 1 && seconds <= 60) {
+              this.plugin.settings.pythonTimeoutSeconds = seconds;
+              await this.plugin.saveSettings();
+            }
+          });
+      });
   }
 }
 
 class CalcPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
+    this.pythonResults = new Map();
 
     this.registerMarkdownCodeBlockProcessor("calc", (source, element, context) => {
       this.renderCalculation(source, element, context);
+    });
+    this.registerMarkdownCodeBlockProcessor("python-run", (source, element, context) => {
+      this.renderPythonRun(source, element, context);
+    });
+    this.registerMarkdownCodeBlockProcessor("python", (source, element, context) => {
+      if (this.isPythonRunBlock(element, context)) {
+        this.renderPythonRun(source, element, context);
+      } else {
+        this.renderPlainPython(source, element);
+      }
     });
 
     this.addCommand({
@@ -430,30 +490,32 @@ class CalcPlugin extends Plugin {
       resultElement.setText(error.message);
     }
 
-    const editExpression = (event) => {
-      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-      const section = context?.getSectionInfo?.(element);
-      if (!view || !section || view.file?.path !== context.sourcePath || view.getMode?.() !== "source") {
-        return;
-      }
-
-      event?.preventDefault();
-      event?.stopPropagation();
-      window.requestAnimationFrame(() => {
-        view.editor.focus();
-        const editLine = section.lineStart + 1;
-        const lineText = view.editor.getLine(editLine);
-        const cursor = { line: editLine, ch: lineText.length };
-        view.editor.setCursor(cursor);
-        view.editor.scrollIntoView?.({ from: cursor, to: cursor }, true);
-        this.refreshLivePreviewDecorations(view.editor, editLine, lineText);
-      });
-    };
+    const editExpression = (event) => this.editRenderedBlock(element, context, event);
     resultElement.addEventListener("click", editExpression);
     resultElement.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         editExpression(event);
       }
+    });
+  }
+
+  editRenderedBlock(element, context, event) {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const section = context?.getSectionInfo?.(element);
+    if (!view || !section || view.file?.path !== context.sourcePath || view.getMode?.() !== "source") {
+      return;
+    }
+
+    event?.preventDefault();
+    event?.stopPropagation();
+    window.requestAnimationFrame(() => {
+      view.editor.focus();
+      const editLine = section.lineStart + 1;
+      const lineText = view.editor.getLine(editLine);
+      const cursor = { line: editLine, ch: lineText.length };
+      view.editor.setCursor(cursor);
+      view.editor.scrollIntoView?.({ from: cursor, to: cursor }, true);
+      this.refreshLivePreviewDecorations(view.editor, editLine, lineText);
     });
   }
 
@@ -478,6 +540,115 @@ class CalcPlugin extends Plugin {
       { line, ch: lineText.length - 1 },
       { line, ch: lineText.length }
     );
+  }
+
+  async renderPythonRun(source, element, context) {
+    const code = dedentCode(source);
+    const container = element.createDiv({ cls: "obsidian-python-run" });
+    const codeElement = container.createEl("pre", { cls: "obsidian-python-code" });
+    codeElement.createEl("code", { cls: "language-python", text: code });
+    codeElement.setAttr("title", "Click to edit Python code");
+    codeElement.addEventListener("click", (event) => {
+      this.editRenderedBlock(element, context, event);
+    });
+    const outputElement = container.createEl("pre", { cls: "obsidian-python-output" });
+    const section = context?.getSectionInfo?.(element);
+    const key = `${context?.sourcePath || ""}:${section?.lineStart ?? ""}:${code}`;
+
+    if (!code.trim()) {
+      outputElement.setText("No Python code to run.");
+      return;
+    }
+
+    if (this.pythonResults.has(key)) {
+      this.showPythonResult(outputElement, this.pythonResults.get(key));
+      return;
+    }
+
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const isLivePreview =
+      view &&
+      view.file?.path === context?.sourcePath &&
+      view.getMode?.() === "source";
+    if (!isLivePreview) {
+      outputElement.setText("Run this block in Live Preview.");
+      return;
+    }
+
+    outputElement.setText("Running...");
+    const result = await this.runPython(code);
+    this.pythonResults.set(key, result);
+    if (outputElement.isConnected) {
+      this.showPythonResult(outputElement, result);
+    }
+  }
+
+  isPythonRunBlock(element, context) {
+    const section = context?.getSectionInfo?.(element);
+    if (!section) {
+      return false;
+    }
+    const lines = section.text.split("\n");
+    const openingLine = lines[section.lineStart] || lines[0] || "";
+    return /^\s*```python\s+run\s*$/i.test(openingLine);
+  }
+
+  renderPlainPython(source, element) {
+    const block = element.createEl("pre");
+    block.createEl("code", { cls: "language-python", text: source });
+  }
+
+  showPythonResult(element, result) {
+    element.toggleClass("obsidian-python-error", !result.ok);
+    element.setText(result.output || (result.ok ? "(no output)" : "Python failed."));
+  }
+
+  async runPython(source) {
+    if (Platform.isMobile) {
+      return { ok: false, output: "python run is available on desktop only." };
+    }
+
+    const timeout = (this.settings.pythonTimeoutSeconds || DEFAULT_SETTINGS.pythonTimeoutSeconds) * 1000;
+    const configuredCommand = this.settings.pythonCommand || DEFAULT_SETTINGS.pythonCommand;
+    const candidates = configuredCommand === "auto"
+      ? Platform.isWin
+        ? [{ command: "py", args: ["-3"] }, { command: "python", args: [] }]
+        : [{ command: "python3", args: [] }, { command: "python", args: [] }]
+      : [{ command: configuredCommand, args: [] }];
+
+    for (const [index, candidate] of candidates.entries()) {
+      const result = await this.executePython(candidate.command, [...candidate.args, "-c", source], timeout);
+      if (result.ok || result.errorCode !== "ENOENT" || index === candidates.length - 1) {
+        return result;
+      }
+    }
+  }
+
+  async executePython(command, args, timeout) {
+    try {
+      const { execFile } = require("child_process");
+      const result = await new Promise((resolve, reject) => {
+        execFile(
+          command,
+          args,
+          { timeout, maxBuffer: 1024 * 1024 },
+          (error, stdout, stderr) => {
+            if (error) {
+              reject({ error, stdout, stderr });
+            } else {
+              resolve({ stdout, stderr });
+            }
+          }
+        );
+      });
+      return { ok: true, output: `${result.stdout}${result.stderr}`.trimEnd() };
+    } catch (failure) {
+      const details = `${failure.stderr || ""}${failure.stdout || ""}`.trimEnd();
+      const message = failure.error?.killed
+        ? `Execution stopped after ${this.settings.pythonTimeoutSeconds} seconds.`
+        : failure.error?.message || "Python failed.";
+      return { ok: false, output: details || message, errorCode: failure.error?.code };
+    }
   }
 
   commitCalculationOnEnter(event) {
@@ -531,3 +702,4 @@ class CalcPlugin extends Plugin {
 module.exports = CalcPlugin;
 module.exports.evaluateExpression = evaluateExpression;
 module.exports.formatResult = formatResult;
+module.exports.dedentCode = dedentCode;

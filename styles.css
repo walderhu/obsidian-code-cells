@@ -27,6 +27,50 @@
 
 .obsidian-python-code {
   background: var(--code-background);
+  color: var(--code-normal);
+}
+
+.obsidian-python-code .token.comment,
+.obsidian-python-code .token.prolog,
+.obsidian-python-code .token.doctype,
+.obsidian-python-code .token.cdata {
+  color: var(--code-comment) !important;
+}
+
+.obsidian-python-code .token.keyword,
+.obsidian-python-code .token.atrule {
+  color: var(--code-keyword) !important;
+}
+
+.obsidian-python-code .token.string,
+.obsidian-python-code .token.char,
+.obsidian-python-code .token.attr-value {
+  color: var(--code-string) !important;
+}
+
+.obsidian-python-code .token.number,
+.obsidian-python-code .token.boolean,
+.obsidian-python-code .token.constant {
+  color: var(--code-value) !important;
+}
+
+.obsidian-python-code .token.function,
+.obsidian-python-code .token.class-name {
+  color: var(--code-function) !important;
+}
+
+.obsidian-python-code .token.operator {
+  color: var(--code-operator) !important;
+}
+
+.obsidian-python-code .token.punctuation {
+  color: var(--code-punctuation) !important;
+}
+
+.obsidian-python-code .token.builtin,
+.obsidian-python-code .token.property,
+.obsidian-python-code .token.variable {
+  color: var(--code-property) !important;
 }
 
 .obsidian-python-run > pre.obsidian-python-output {

@@ -753,7 +753,8 @@ class CalcPlugin extends Plugin {
     const code = dedentCode(source);
     const container = element.createDiv({ cls: "obsidian-python-run" });
     const codeElement = container.createEl("pre", { cls: "obsidian-python-code" });
-    codeElement.createEl("code", { cls: "language-python", text: code });
+    const highlightedCode = codeElement.createEl("code", { cls: "language-python", text: code });
+    this.highlightPythonCode(highlightedCode);
     codeElement.setAttr("title", "Click to edit Python code");
     codeElement.addEventListener("click", (event) => {
       this.editRenderedBlock(element, context, event);
@@ -805,7 +806,15 @@ class CalcPlugin extends Plugin {
 
   renderPlainPython(source, element) {
     const block = element.createEl("pre");
-    block.createEl("code", { cls: "language-python", text: source });
+    const codeElement = block.createEl("code", { cls: "language-python", text: source });
+    this.highlightPythonCode(codeElement);
+  }
+
+  highlightPythonCode(codeElement) {
+    const prism = window.Prism;
+    if (typeof prism?.highlightElement === "function") {
+      prism.highlightElement(codeElement);
+    }
   }
 
   showPythonResult(element, diagnosticsElement, result) {

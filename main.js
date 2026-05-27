@@ -760,6 +760,7 @@ class CalcPlugin extends Plugin {
     });
     const outputElement = container.createEl("pre", { cls: "obsidian-python-output" });
     const diagnosticsElement = container.createDiv({ cls: "obsidian-python-diagnostics" });
+    diagnosticsElement.hide();
     const section = context?.getSectionInfo?.(element);
     const key = `${context?.sourcePath || ""}:${section?.lineStart ?? ""}:${code}`;
 
@@ -784,7 +785,6 @@ class CalcPlugin extends Plugin {
     }
 
     outputElement.setText("Running...");
-    diagnosticsElement.setText("Linting...");
     const [execution, diagnostics] = await Promise.all([this.runPython(code), this.lintPython(code)]);
     const result = { ...execution, diagnostics };
     this.pythonResults.set(key, result);
@@ -813,10 +813,11 @@ class CalcPlugin extends Plugin {
     element.setText(result.output || (result.ok ? "(no output)" : "Python failed."));
     diagnosticsElement.empty();
     if (!result.diagnostics?.length) {
-      diagnosticsElement.setText("No lint problems.");
       diagnosticsElement.removeClass("obsidian-python-lint-error");
+      diagnosticsElement.hide();
       return;
     }
+    diagnosticsElement.show();
     diagnosticsElement.addClass("obsidian-python-lint-error");
     for (const diagnostic of result.diagnostics) {
       diagnosticsElement.createDiv({

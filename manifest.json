@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-calc",
+  "name": "Calc",
+  "version": "1.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Insert fenced code blocks with history and evaluate expressions in calc blocks.",
+  "author": "Denis",
+  "isDesktopOnly": false
+}

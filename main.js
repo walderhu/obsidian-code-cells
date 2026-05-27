@@ -52,6 +52,7 @@ const FUNCTIONS = {
 
 const CODE_LANGUAGES = [
   { id: "calc" },
+  { id: "text" },
   { id: "python" },
   { id: "bash" },
   { id: "sql" },
@@ -441,9 +442,11 @@ class CalcPlugin extends Plugin {
       window.requestAnimationFrame(() => {
         view.editor.focus();
         const editLine = section.lineStart + 1;
-        const cursor = { line: editLine, ch: view.editor.getLine(editLine).length };
+        const lineText = view.editor.getLine(editLine);
+        const cursor = { line: editLine, ch: lineText.length };
         view.editor.setCursor(cursor);
         view.editor.scrollIntoView?.({ from: cursor, to: cursor }, true);
+        this.refreshLivePreviewDecorations(view.editor, editLine, lineText);
       });
     };
     resultElement.addEventListener("click", editExpression);
@@ -452,6 +455,29 @@ class CalcPlugin extends Plugin {
         editExpression(event);
       }
     });
+  }
+
+  refreshLivePreviewDecorations(editor, line, lineText) {
+    if (!lineText) {
+      return;
+    }
+
+    const cm = editor.cm;
+    if (cm?.dispatch && editor.posToOffset) {
+      const from = editor.posToOffset({ line, ch: lineText.length - 1 });
+      cm.dispatch({
+        changes: { from, to: from + 1, insert: lineText.slice(-1) },
+      });
+      return;
+    }
+
+    // Replacing a character with itself triggers Live Preview decorators
+    // without changing the note contents.
+    editor.replaceRange(
+      lineText.slice(-1),
+      { line, ch: lineText.length - 1 },
+      { line, ch: lineText.length }
+    );
   }
 
   commitCalculationOnEnter(event) {

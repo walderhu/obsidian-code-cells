@@ -51,27 +51,28 @@ const FUNCTIONS = {
 };
 
 const CODE_LANGUAGES = [
-  { id: "calc", name: "Calc" },
-  { id: "python", name: "Python" },
-  { id: "bash", name: "Bash" },
-  { id: "sql", name: "SQL" },
-  { id: "javascript", name: "JavaScript" },
-  { id: "typescript", name: "TypeScript" },
-  { id: "json", name: "JSON" },
-  { id: "html", name: "HTML" },
-  { id: "css", name: "CSS" },
-  { id: "markdown", name: "Markdown" },
-  { id: "yaml", name: "YAML" },
-  { id: "powershell", name: "PowerShell" },
-  { id: "c", name: "C" },
-  { id: "cpp", name: "C++" },
-  { id: "java", name: "Java" },
-  { id: "rust", name: "Rust" },
-  { id: "go", name: "Go" },
-  { id: "latex", name: "LaTeX" },
+  { id: "calc", name: "Calc", description: "Калькулятор: = и Enter сохраняют ответ" },
+  { id: "python", name: "Python", description: "Скрипт Python" },
+  { id: "bash", name: "Bash", description: "Команды терминала" },
+  { id: "sql", name: "SQL", description: "SQL-запрос" },
+  { id: "javascript", name: "JavaScript", description: "JavaScript-код" },
+  { id: "typescript", name: "TypeScript", description: "TypeScript-код" },
+  { id: "json", name: "JSON", description: "Структурированные данные" },
+  { id: "html", name: "HTML", description: "HTML-разметка" },
+  { id: "css", name: "CSS", description: "Стили CSS" },
+  { id: "markdown", name: "Markdown", description: "Markdown-текст" },
+  { id: "yaml", name: "YAML", description: "YAML-конфигурация" },
+  { id: "powershell", name: "PowerShell", description: "Команды PowerShell" },
+  { id: "c", name: "C", description: "Код C" },
+  { id: "cpp", name: "C++", description: "Код C++" },
+  { id: "java", name: "Java", description: "Код Java" },
+  { id: "rust", name: "Rust", description: "Код Rust" },
+  { id: "go", name: "Go", description: "Код Go" },
+  { id: "latex", name: "LaTeX", description: "Формулы и документ LaTeX" },
 ];
 
 const DEFAULT_SETTINGS = {
+  captureCtrlK: true,
   recentLanguages: [],
 };
 
@@ -270,7 +271,7 @@ class CodeLanguageModal extends FuzzySuggestModal {
   }
 
   getItemText(item) {
-    return `${item.name} (${item.id})`;
+    return `${item.name} (${item.id}) - ${item.description}`;
   }
 
   onChooseItem(item) {
@@ -291,8 +292,17 @@ class CalcSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Insert code block hotkey")
       .setDesc(
-        'The "Insert fenced code block" command defaults to Ctrl+K (Cmd+K on macOS). Change it in Settings -> Hotkeys if it conflicts with another command.'
-      );
+        'The "Insert fenced code block" command is also available in Settings -> Hotkeys.'
+      )
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.captureCtrlK)
+          .setTooltip("Open the language picker directly with Ctrl+K / Cmd+K")
+          .onChange(async (value) => {
+            this.plugin.settings.captureCtrlK = value;
+            await this.plugin.saveSettings();
+          });
+      });
 
     new Setting(containerEl)
       .setName("Language history")
@@ -318,15 +328,15 @@ class CalcPlugin extends Plugin {
     this.addCommand({
       id: "insert-fenced-code-block",
       name: "Insert fenced code block",
-      hotkeys: [{ modifiers: ["Mod"], key: "K" }],
       editorCallback: (editor) => {
-        new CodeLanguageModal(this.app, this, editor).open();
+        this.openLanguagePicker(editor);
       },
     });
 
     this.addSettingTab(new CalcSettingTab(this.app, this));
 
     this.registerDomEvent(document, "keydown", (event) => {
+      this.openLanguagePickerOnHotkey(event);
       this.commitCalculationOnEnter(event);
     }, true);
   }
@@ -341,6 +351,30 @@ class CalcPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  openLanguagePicker(editor) {
+    new CodeLanguageModal(this.app, this, editor).open();
+  }
+
+  openLanguagePickerOnHotkey(event) {
+    const pressedModK =
+      event.key.toLowerCase() === "k" &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!this.settings.captureCtrlK || !pressedModK) {
+      return;
+    }
+
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view || !view.containerEl.contains(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.openLanguagePicker(view.editor);
   }
 
   getOrderedLanguages() {
@@ -384,13 +418,20 @@ class CalcPlugin extends Plugin {
 
   renderCalculation(source, element) {
     const expression = source.replace(/=\s*$/, "").trim();
-    const resultElement = element.createDiv({ cls: "obsidian-calc-result" });
+    const blockElement = element.createEl("pre", { cls: "obsidian-calc-block" });
+    const languageElement = blockElement.createSpan({
+      cls: "obsidian-calc-language",
+      text: "calc",
+    });
+    languageElement.setAttr("aria-hidden", "true");
+    const codeElement = blockElement.createEl("code", { cls: "language-calc" });
 
     try {
-      resultElement.setText(formatResult(evaluateExpression(expression)));
+      const result = formatResult(evaluateExpression(expression));
+      codeElement.setText(`${expression}\n= ${result}`);
     } catch (error) {
-      resultElement.addClass("obsidian-calc-error");
-      resultElement.setText(error.message);
+      blockElement.addClass("obsidian-calc-error");
+      codeElement.setText(`${expression}\n! ${error.message}`);
     }
   }
 
